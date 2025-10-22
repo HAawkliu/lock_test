@@ -21,6 +21,9 @@ struct Args {
     int repeats = 5; // internal multiple runs for averaging
     double duration = 2.0; // seconds per test run
     bool explicitThreads = false; // 是否由 -t 显式指定
+    // cpu_burn 配置（多数并行，少数加锁）
+    int cpuParallelIters = -1; // <0 表示采用默认值
+    int cpuLockedIters = -1;   // <0 表示采用默认值
 };
 
 static void print_usage(const char* prog) {
@@ -29,6 +32,7 @@ static void print_usage(const char* prog) {
     std::cout << "  -r task      runtask name: do_nothing (default)\n";
     std::cout << "  -l lock      lock kind: mutex (default)\n";
     std::cout << "  -d seconds   duration per run in seconds (default 2.0)\n";
+    std::cout << "  -R p[:l]     cpu_burn iters: parallel p, locked l (default p=2048,l=32)\n";
 }
 
 static bool parse_args(int argc, char** argv, Args& out) {
@@ -43,6 +47,27 @@ static bool parse_args(int argc, char** argv, Args& out) {
             out.lockKind = argv[++i];
         } else if (a == "-d" && i + 1 < argc) {
             out.duration = std::atof(argv[++i]);
+        } else if (a == "-R" && i + 1 < argc) {
+            std::string v = argv[++i];
+            // 支持 "p:l" 或 "p,l" 或仅 "p"
+            auto parse_pair = [](const std::string& s, int& p, int& l) {
+                size_t pos = s.find(':');
+                if (pos == std::string::npos) pos = s.find(',');
+                try {
+                    if (pos == std::string::npos) {
+                        p = std::stoi(s);
+                    } else {
+                        p = std::stoi(s.substr(0, pos));
+                        l = std::stoi(s.substr(pos + 1));
+                    }
+                } catch (...) {
+                    p = -1; l = -1;
+                }
+            };
+            int p = -1, l = -1;
+            parse_pair(v, p, l);
+            if (p > 0) out.cpuParallelIters = p;
+            if (l > 0) out.cpuLockedIters = l;
         } else if (a == "-h" || a == "--help") {
             print_usage(argv[0]);
             return false;
@@ -73,12 +98,15 @@ static std::unique_ptr<iLock> make_lock(const std::string& name) {
     return nullptr;
 }
 
-static std::unique_ptr<iRunTask> make_task(const std::string& name, std::uint64_t /*unused*/) {
+static std::unique_ptr<iRunTask> make_task(const std::string& name, std::uint64_t /*unused*/, int cpuParallelIters, int cpuLockedIters) {
     if (name == "do_nothing") {
         return std::make_unique<DoNothingTask>();
     }
     if (name == "cpu_burn" || name == "compute") {
-        return std::make_unique<CpuBurnTask>();
+        // 应用 CLI 覆盖，缺省采用 CpuBurnTask 默认值
+        int p = (cpuParallelIters > 0) ? cpuParallelIters : 2048;
+        int l = (cpuLockedIters > 0) ? cpuLockedIters : 32;
+        return std::make_unique<CpuBurnTask>(p, l);
     }
     return nullptr;
 }
@@ -94,7 +122,7 @@ int main(int argc, char** argv) {
     if (args.explicitThreads) {
         threadCounts.push_back(args.threads);
     } else {
-        threadCounts = {1, 2, 4, 8, 16, 32};
+        threadCounts = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 32};
     }
 
     std::cout.setf(std::ios::fixed); std::cout.precision(2);
@@ -120,7 +148,7 @@ int main(int argc, char** argv) {
             std::cerr << "Unknown lock kind: " << args.lockKind << "\n";
             return 2;
         }
-        auto task = make_task(args.runTask, 0);
+        auto task = make_task(args.runTask, 0, args.cpuParallelIters, args.cpuLockedIters);
         if (!task) {
             std::cerr << "Unknown runtask: " << args.runTask << "\n";
             return 3;

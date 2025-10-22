@@ -10,7 +10,7 @@
 
 当前支持的任务：
 - do_nothing：临界区不做任何事情，用以近似隔离锁本身开销
-- cpu_burn：在临界区做少量纯计算，模拟轻量工作负载
+- cpu_burn：大部分计算在锁外并行执行，锁内保留少量临界区计算，模拟更贴近真实应用的混合负载
 
 备注：本项目不包含“仅原子操作”的无锁对照路径，所有统计均在锁保护路径下完成。
 
@@ -36,11 +36,12 @@ cmake --build build -j
 用法（与程序内 `--help` 一致）：
 
 ```
-Usage: ./lock_test [-t threads] [-r task] [-l lock] [-d seconds]
+Usage: ./lock_test [-t threads] [-r task] [-l lock] [-d seconds] [-R p[:l]]
 	-t threads   number of pthreads (default runs 1,2,4,8,16,32 when omitted)
 	-r task      runtask name: do_nothing (default)
 	-l lock      lock kind: mutex (default)
 	-d seconds   duration per run in seconds (default 2.0)
+	-R p[:l]     cpu_burn iters: parallel p, locked l (default p=2048,l=32)
 ```
 
 说明：
@@ -60,6 +61,9 @@ Usage: ./lock_test [-t threads] [-r task] [-l lock] [-d seconds]
 
 # 延长每组测试时长为 5 秒
 ./build/lock_test -l mcs -d 5
+
+# 指定 cpu_burn 的并行/加锁迭代（例如 p=1024, l=16）
+./build/lock_test -r cpu_burn -l spin -R 1024:16
 ```
 
 输出格式（数值仅示意）：
@@ -80,7 +84,7 @@ Threads                Avg Ops               Ops/s
 
 - `include/`
 	- `iLock.h`：锁接口与 `LockGuard`
-	- `iRunTask.h`：任务接口与内置任务 `DoNothingTask`、`CpuBurnTask`
+	- `iRunTask.h`：任务接口（两阶段：`run_parallel()` 与 `run_locked()`）与内置任务 `DoNothingTask`、`CpuBurnTask`
 	- `locks/`
 		- `StdMutexLock.h`：基于 `std::mutex`
 		- `TasSpinlock.h`：基于 `std::atomic_flag` 的 TAS 自旋锁
@@ -98,7 +102,7 @@ Threads                Avg Ops               Ops/s
 2. 在 `src/main.cpp` 的 `make_lock()` 中为你的锁添加名称分支。
 
 新增自定义任务：
-1. 新建类继承 `lt::iRunTask`，实现 `reset()/run()/name()`。
+1. 新建类继承 `lt::iRunTask`，实现 `reset()/run_parallel()/run_locked()/name()`。
 2. 在 `src/main.cpp` 的 `make_task()` 中注册任务名称。
 
 建议：

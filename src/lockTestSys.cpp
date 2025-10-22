@@ -37,8 +37,12 @@ void* thread_func_lock(void* arg) {
     auto* ctx = static_cast<ThreadCtxLock*>(arg);
     std::uint64_t localCount = 0;
     while (CycleTimer::currentSeconds() < ctx->endTime) {
+        // majority of work that can run without lock
+        ctx->task->run_parallel();
+
+        // critical section protected by the lock
         ctx->lock->lock();
-        (void)ctx->task->run();
+        ctx->task->run_locked();
         ctx->lock->unlock();
         ++localCount;
     }

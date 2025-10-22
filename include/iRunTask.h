@@ -6,19 +6,19 @@ namespace lt {
 
 // Base run task interface, cooperates with locking framework.
 // Contract:
-// - run() executes one minimal unit of work in the lock-based path.
-// - run_atomic() executes one minimal unit of work using atomics only; must be safe under concurrent calls.
+// - run_parallel(): the major portion of work that can proceed without holding the lock.
+// - run_locked(): the small critical section that must be protected by the external lock.
 
 class iRunTask {
 public:
     virtual ~iRunTask() = default;
     virtual void reset() = 0;
-    virtual bool run() = 0;           // protected by external lock
+    virtual void run_parallel() = 0;   // executed outside of lock
+    virtual void run_locked() = 0;     // executed under external lock
     virtual const char* name() const = 0;
 };
 
-// A concrete task: do nothing under lock; in atomic path, perform a relaxed atomic increment
-// to simulate the minimal atomic operation cost.
+// A concrete task: do nothing in both phases to isolate lock overhead.
 class DoNothingTask : public iRunTask {
 public:
     DoNothingTask() { reset(); }
@@ -27,11 +27,11 @@ public:
         // nothing to reset for do_nothing
     }
 
-    // Lock-based path: do nothing to isolate lock overhead
-    bool run() override {
-        // intentionally empty
-        return false; 
-    }
+    // No parallel work
+    void run_parallel() override { /* intentionally empty */ }
+
+    // Lock-based path: still do nothing to isolate lock overhead
+    void run_locked() override { /* intentionally empty */ }
 
     const char* name() const override { return "do_nothing"; }
 
@@ -43,28 +43,34 @@ private:
 // without touching shared memory to minimize cache contention.
 class CpuBurnTask : public iRunTask {
 public:
-    explicit CpuBurnTask(int workIters = 256) : workIters_(workIters) {}
+    // split the work into parallel and locked portions; keep locked part relatively small by default
+    explicit CpuBurnTask(int parallelIters = 2048, int lockedIters = 32)
+        : parallelIters_(parallelIters), lockedIters_(lockedIters) {}
 
     void reset() override {
         // stateless
     }
 
-    bool run() override {
+    void run_parallel() override { do_scramble(parallelIters_); }
+
+    void run_locked() override { do_scramble(lockedIters_); }
+
+    const char* name() const override { return "cpu_burn"; }
+
+private:
+    static inline void do_scramble(int iters) {
         volatile std::uint64_t x = 0x9e3779b97f4a7c15ULL; // per-call local to avoid sharing
         // Do a small xorshift-like scramble loop
-        for (int i = 0; i < workIters_; ++i) {
+        for (int i = 0; i < iters; ++i) {
             x ^= x << 13;
             x ^= x >> 7;
             x ^= x << 17;
         }
         (void)x; // prevent unused warnings
-        return false; // duration-controlled loop ignores return
     }
 
-    const char* name() const override { return "cpu_burn"; }
-
-private:
-    int workIters_;
+    int parallelIters_;
+    int lockedIters_;
 };
 
 } // namespace lt
