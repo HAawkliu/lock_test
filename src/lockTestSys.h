@@ -15,25 +15,23 @@ public:
     LockTestSys(std::unique_ptr<iLock> lock,
                 std::unique_ptr<iRunTask> task,
                 int numThreads,
-                std::uint64_t iterations)
-        : lock_(std::move(lock)), task_(std::move(task)), numThreads_(numThreads), iterations_(iterations) {}
+                double durationSeconds)
+        : lock_(std::move(lock)), task_(std::move(task)), numThreads_(numThreads), durationSeconds_(durationSeconds) {}
 
-    // Run with lock: threads compete for lock and call task->run() until finished.
-    // Returns elapsed microseconds.
+    // Run with lock for a fixed duration; threads compete for lock and call task->run().
+    // Returns total operations completed across all threads.
     std::uint64_t run_test();
 
-    // Run with atomics only: threads increment a shared atomic counter until target.
-    // Returns elapsed microseconds.
-    std::uint64_t run_atomic();
+    // No atomic-only path in this mode.
 
     int threads() const { return numThreads_; }
-    std::uint64_t iterations() const { return iterations_; }
+    double durationSeconds() const { return durationSeconds_; }
 
 private:
     std::unique_ptr<iLock> lock_;
     std::unique_ptr<iRunTask> task_;
     int numThreads_ {4};
-    std::uint64_t iterations_ {10'000'000};
+    double durationSeconds_ {1.0};
 };
 
 } // namespace lt

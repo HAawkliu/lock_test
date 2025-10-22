@@ -1,41 +1,51 @@
 #include "lockTestSys.h"
 
 #include <pthread.h>
-#include <atomic>
 #include <cassert>
+#include <cstdint>
+#include <vector>
+#include <new>
+#include <chrono>
 #include "utils/CycleTimer.h"
 
 namespace lt {
 
 namespace {
+// Determine cache line size at compile time; fallback to 64 if not available
+#if defined(__cpp_lib_hardware_interference_size)
+constexpr std::size_t kCacheLineSize = std::hardware_destructive_interference_size;
+#else
+constexpr std::size_t kCacheLineSize = 64;
+#endif
+static_assert(kCacheLineSize >= sizeof(std::uint64_t), "Cache line size must be >= 8 bytes");
+
+// Padding to reduce false sharing when storing results
+struct alignas(kCacheLineSize) ThreadResult {
+    std::uint64_t count;
+    char pad[kCacheLineSize - sizeof(std::uint64_t)];
+};
+static_assert(sizeof(ThreadResult) == kCacheLineSize, "ThreadResult should occupy exactly one cache line");
+
 struct ThreadCtxLock {
     iLock* lock;
     iRunTask* task;
+    double endTime;
+    ThreadResult* resultSlot;
 };
 
 void* thread_func_lock(void* arg) {
     auto* ctx = static_cast<ThreadCtxLock*>(arg);
-    // Loop until task signals finished; guard ensures mutual exclusion
-    while (true) {
+    std::uint64_t localCount = 0;
+    while (CycleTimer::currentSeconds() < ctx->endTime) {
         ctx->lock->lock();
-        bool finished = ctx->task->run();
+        (void)ctx->task->run();
         ctx->lock->unlock();
-        if (finished) break;
+        ++localCount;
     }
+    ctx->resultSlot->count = localCount; // single write on exit
     return nullptr;
 }
 
-struct ThreadCtxAtomicTask {
-    iRunTask* task;
-};
-
-void* thread_func_atomic(void* arg) {
-    auto* ctx = static_cast<ThreadCtxAtomicTask*>(arg);
-    while (true) {
-        if (ctx->task->run_atomic()) break;
-    }
-    return nullptr;
-}
 } // namespace
 
 std::uint64_t LockTestSys::run_test() {
@@ -43,36 +53,26 @@ std::uint64_t LockTestSys::run_test() {
     task_->reset();
 
     std::vector<pthread_t> threads(numThreads_);
-    ThreadCtxLock ctx{ lock_.get(), task_.get() };
+    std::vector<ThreadResult> results(numThreads_);
+    double endTime = CycleTimer::currentSeconds() + durationSeconds_;
 
-    double t0 = CycleTimer::currentSeconds();
+    std::vector<ThreadCtxLock*> ctx_ptrs(numThreads_, nullptr);
     for (int i = 0; i < numThreads_; ++i) {
-        pthread_create(&threads[i], nullptr, &thread_func_lock, &ctx);
+        ctx_ptrs[i] = new ThreadCtxLock{ lock_.get(), task_.get(), endTime, &results[i] };
+        pthread_create(&threads[i], nullptr, &thread_func_lock, ctx_ptrs[i]);
     }
-    for (auto& th : threads) {
-        pthread_join(th, nullptr);
-    }
-    double t1 = CycleTimer::currentSeconds();
-    double secs = t1 - t0;
-    return static_cast<std::uint64_t>(secs * 1e6);
-}
-
-std::uint64_t LockTestSys::run_atomic() {
-    assert(task_);
-    task_->reset();
-    std::vector<pthread_t> threads(numThreads_);
-    ThreadCtxAtomicTask ctx{ task_.get() };
-
-    double t0 = CycleTimer::currentSeconds();
+    std::uint64_t total = 0;
     for (int i = 0; i < numThreads_; ++i) {
-        pthread_create(&threads[i], nullptr, &thread_func_atomic, &ctx);
+        pthread_join(threads[i], nullptr);
     }
-    for (auto& th : threads) {
-        pthread_join(th, nullptr);
+    for (int i = 0; i < numThreads_; ++i) {
+        delete ctx_ptrs[i];
     }
-    double t1 = CycleTimer::currentSeconds();
-    double secs = t1 - t0;
-    return static_cast<std::uint64_t>(secs * 1e6);
+    for (int i = 0; i < numThreads_; ++i) {
+        total += results[i].count;
+    }
+    return total;
 }
+ 
 
 } // namespace lt

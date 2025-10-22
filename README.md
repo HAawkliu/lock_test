@@ -27,11 +27,10 @@ cmake --build build -j
 ./build/lock_test -t 4 -r sum -l mutex
 ```
 
-默认迭代次数为 20,000,000。程序会多次（默认 5 次）运行两组测试：
-- 使用锁的竞争执行（lock）
-- 仅用原子操作的执行（atomic）
+程序按固定时长运行（默认 2.0 秒，每轮，次数可通过 -d 指定），并统计吞吐量：
+- 使用锁的竞争执行（lock）：临界区不做任何事，仅测量锁/解锁开销
 
-最后输出两者的平均耗时（微秒）及比值。
+程序输出平均操作数与 ops/s（吞吐量）。
 
 ## 扩展
 
@@ -42,7 +41,7 @@ cmake --build build -j
 
 - `include/iLock.h`：锁接口与 RAII 守卫
 - `include/locks/StdMutexLock.h`：基于 `std::mutex` 的锁
-- `include/iRunTask.h`：任务接口与 `SumTask`
-- `src/lockTestSys.h/.cpp`：测试系统，提供 `run_test` 与 `run_atomic`
-- `src/main.cpp`：参数解析与多轮测试
+- `include/iRunTask.h`：任务接口与 `DoNothingTask`
+- `src/lockTestSys.h/.cpp`：固定时长测试系统，提供 `run_test`（返回总操作数）
+- `src/main.cpp`：参数解析与多轮测试、输出吞吐量
 
