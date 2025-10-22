@@ -1,3 +1,0 @@
-/home/hawkliu/lock_test/build/CMakeFiles/lock_test.dir
-/home/hawkliu/lock_test/build/CMakeFiles/edit_cache.dir
-/home/hawkliu/lock_test/build/CMakeFiles/rebuild_cache.dir
