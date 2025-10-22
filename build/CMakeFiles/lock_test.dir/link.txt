@@ -1,0 +1,1 @@
+/usr/bin/clang++ -O3 -DNDEBUG CMakeFiles/lock_test.dir/src/main.cpp.o CMakeFiles/lock_test.dir/src/lockTestSys.cpp.o -o lock_test 

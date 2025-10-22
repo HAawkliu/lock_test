@@ -1,0 +1,12 @@
+[
+{
+  "directory": "/home/hawkliu/lock_test/build",
+  "command": "/usr/bin/clang++  -I/home/hawkliu/lock_test/include -O3 -DNDEBUG -Wall -Wextra -Wpedantic -std=c++17 -o CMakeFiles/lock_test.dir/src/main.cpp.o -c /home/hawkliu/lock_test/src/main.cpp",
+  "file": "/home/hawkliu/lock_test/src/main.cpp"
+},
+{
+  "directory": "/home/hawkliu/lock_test/build",
+  "command": "/usr/bin/clang++  -I/home/hawkliu/lock_test/include -O3 -DNDEBUG -Wall -Wextra -Wpedantic -std=c++17 -o CMakeFiles/lock_test.dir/src/lockTestSys.cpp.o -c /home/hawkliu/lock_test/src/lockTestSys.cpp",
+  "file": "/home/hawkliu/lock_test/src/lockTestSys.cpp"
+}
+]
