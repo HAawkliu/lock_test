@@ -133,6 +133,41 @@ end
 - Windows：当前实现直接依赖 `pthread.h`（见 `lockTestSys.cpp`），不支持原生 MSVC 环境；如需支持可改造为 `std::thread` 或引入 pthread 兼容层。
 
 ## 已知限制
+- 未实现自动绘图，需要使用下方脚本或自行导出并绘图。
+
+## 绘图脚本：多锁同图（threads vs ops/s）
+
+仓库提供 `tools/plot_locks.py`，可批量运行基准并绘制一张图，展示多种锁随线程数的吞吐变化。
+
+依赖：`python3`、`matplotlib`（若仅输出 CSV，可加 `--no-plot` 避免依赖）
+
+示例（fish）：
+
+```fish
+# 安装依赖（可选）
+pip install --user matplotlib
+
+# 跑四种锁，cpu_burn，最大线程 32，时长 1s，并保存图像
+python3 tools/plot_locks.py --bin ./build/lock_test \
+	--task cpu_burn --ratio 2048:32 --max-threads 32 --duration 1.0 \
+	--locks mutex,spin,ticket,mcs --output /tmp/locks_cpu_burn.png
+
+# 自定义线程集合、只输出 CSV（不绘图）
+python3 tools/plot_locks.py --bin ./build/lock_test \
+	--task do_nothing --threads 1,2,4,8,16,32 --no-plot
+```
+
+参数说明：
+- `--task`：`do_nothing` 或 `cpu_burn`
+- `--ratio`：仅在 `cpu_burn` 下生效，形如 `p[:l]` 或 `p,l`，对应 `-R p[:l]`
+- `--max-threads`：未指定 `--threads` 时，默认生成 `1,2,4,...,<=max` 的线程数集合
+- `--threads`：显式指定线程集合（逗号分隔）将覆盖 `--max-threads`
+- `--thread-bins`：用分段区间生成线程集合，如 `1-64:1,65-128:8` 表示 1..64 步长 1，然后 65..128 步长 8（若与 `--threads` 同时给出，`--threads` 优先）
+- `--locks`：要对比的锁集合，默认 `mutex,spin,ticket,mcs`
+- `--duration`：每次运行时长（秒），传递给可执行程序的 `-d`
+- `--output`：PNG 输出路径；若不提供则交互显示
+- `--no-plot`：不绘图，仅打印 CSV 行，形如 `result,lock=...,threads=...,avg_ops=...,ops_s=...`
+
 
 - 重复次数 `repeats` 固定为 5，当前无 CLI 选项调整。
 - 输出为控制台表格，未内置 CSV/JSON 导出；可通过重定向保存文本。
