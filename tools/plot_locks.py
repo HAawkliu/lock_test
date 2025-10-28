@@ -1,206 +1,80 @@
 #!/usr/bin/env python3
 import argparse
 import subprocess
+#!/usr/bin/env python3
+import argparse
 import sys
-import re
 from pathlib import Path
-from typing import List, Dict, Tuple
-
-RowRe = re.compile(r"^\s*(\d+)\s+([0-9]+(?:\.[0-9]*)?)\s+([0-9]+(?:\.[0-9]*)?)\s*$")
-
-
-def parse_threads_list(s: str) -> List[int]:
-    parts = [p.strip() for p in s.split(',') if p.strip()]
-    vals: List[int] = []
-    for p in parts:
-        try:
-            vals.append(int(p))
-        except ValueError:
-            raise argparse.ArgumentTypeError(f"Invalid thread count: {p}")
-    if not vals:
-        raise argparse.ArgumentTypeError("Empty thread list")
-    return vals
-
-
-def parse_thread_bins(spec: str) -> List[int]:
-    """Parse a spec like "1-64:1,65-128:8" into a thread list.
-    - Separators: comma or semicolon
-    - Each bin: start-end:step (step default=1)
-    - Inclusive ranges
-    - Duplicates (e.g., boundary overlap) will be removed preserving order
-    """
-    if not spec:
-        raise argparse.ArgumentTypeError("Empty thread-bins spec")
-    tokens = re.split(r"[;,]", spec)
-    out: List[int] = []
-    for tok in tokens:
-        tok = tok.strip()
-        if not tok:
-            continue
-        m = re.match(r"^(\d+)\s*-\s*(\d+)(?::(\d+))?$", tok)
-        if not m:
-            raise argparse.ArgumentTypeError(f"Invalid bin: '{tok}', expected start-end[:step]")
-        start = int(m.group(1))
-        end = int(m.group(2))
-        step = int(m.group(3)) if m.group(3) else 1
-        if start <= 0 or end <= 0 or step <= 0:
-            raise argparse.ArgumentTypeError(f"Non-positive values in bin: '{tok}'")
-        if start > end:
-            raise argparse.ArgumentTypeError(f"start>end in bin: '{tok}'")
-        out.extend(list(range(start, end + 1, step)))
-    # de-duplicate preserving order
-    seen = set()
-    dedup: List[int] = []
-    for v in out:
-        if v not in seen:
-            dedup.append(v)
-            seen.add(v)
-    return dedup
-
-def pow2_threads_up_to(n: int) -> List[int]:
-    out = []
-    v = 1
-    while v <= n:
-        out.append(v)
-        v *= 2
-    return out
-
-
-def run_once(binary: Path, task: str, lock: str, threads: int, duration: float, ratio: str) -> Tuple[float, float]:
-    """Run the benchmark once for given parameters and return (avg_ops, ops_per_sec)."""
-    cmd = [str(binary), "-r", task, "-l", lock, "-t", str(threads), "-d", str(duration)]
-    if task == "cpu_burn" and ratio:
-        cmd.extend(["-R", ratio])
-    try:
-        proc = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Command failed: {' '.join(cmd)}", file=sys.stderr)
-        print(e.stdout, file=sys.stderr)
-        print(e.stderr, file=sys.stderr)
-        raise
-    avg_ops = None
-    ops_s = None
-    for line in proc.stdout.splitlines():
-        m = RowRe.match(line)
-        if m:
-            th = int(m.group(1))
-            if th == threads:
-                avg_ops = float(m.group(2))
-                ops_s = float(m.group(3))
-                break
-    if avg_ops is None or ops_s is None:
-        raise RuntimeError(f"Failed to parse output for threads={threads}. Output:\n{proc.stdout}")
-    return avg_ops, ops_s
+from typing import Dict, List, Tuple
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Run lock_test across threads and plot threads vs ops/s for multiple locks.")
-    ap.add_argument("--bin", default="./build/lock_test", help="Path to lock_test binary (default: ./build/lock_test)")
-    ap.add_argument("--task", default="cpu_burn", choices=["cpu_burn", "do_nothing"], help="Benchmark task")
-    ap.add_argument("--ratio", default="2048:32", help="cpu_burn ratio p[:l] or p,l (default 2048:32). Ignored for do_nothing")
-    ap.add_argument("--max-threads", type=int, default=32, help="Maximum threads to test (powers of two up to this value)")
-    ap.add_argument("--threads", type=parse_threads_list, default=None, help="Explicit comma-separated thread list (overrides --max-threads)")
-    ap.add_argument("--locks", default="mutex,spin,ticket,mcs", help="Comma-separated lock kinds to plot")
-    ap.add_argument("--thread-bins", dest="thread_bins", default=None,
-                    help="Piecewise thread ranges like '1-64:1,65-128:8' (overridden by --threads if set)")
-    ap.add_argument("--duration", type=float, default=1.0, help="Duration per run in seconds (default 1.0)")
+    ap = argparse.ArgumentParser(description="Plot threads vs ops/s from a CSV produced by lock_test --csv-file.")
+    ap.add_argument("--csv-in", required=True, help="Path to CSV produced by lock_test")
     ap.add_argument("--output", default=None, help="Path to save figure (png). If omitted, will show interactively")
-    ap.add_argument("--no-plot", action="store_true", help="Only run and print CSV results, do not plot")
-    ap.add_argument("--csv-in", dest="csv_in", default=None, help="Plot from CSV file generated by lock_test --csv/--csv-file")
 
     args = ap.parse_args()
 
+    path = Path(args.csv_in)
+    if not path.exists():
+        print(f"CSV not found: {path}", file=sys.stderr)
+        return 2
+
+    # Read CSV
     results: Dict[str, List[Tuple[int, float]]] = {}
-
-    if args.csv_in:
-        # Plot from CSV
-        path = Path(args.csv_in)
-        if not path.exists():
-            print(f"CSV not found: {path}", file=sys.stderr)
+    with path.open('r') as f:
+        header = f.readline().strip().split(',')
+        try:
+            idx_lock = header.index('lock')
+            idx_threads = header.index('threads')
+            idx_ops_s = header.index('ops_s')
+            idx_task = header.index('task') if 'task' in header else None
+        except ValueError:
+            print("CSV missing required columns: lock,threads,ops_s", file=sys.stderr)
             return 2
-        with path.open('r') as f:
-            header = f.readline().strip().split(',')
+        task_name = None
+        for line in f:
+            if not line.strip():
+                continue
+            cols = [c.strip() for c in line.strip().split(',')]
             try:
-                idx_lock = header.index('lock')
-                idx_threads = header.index('threads')
-                idx_ops_s = header.index('ops_s')
-            except ValueError:
-                print("CSV missing required columns: lock,threads,ops_s", file=sys.stderr)
-                return 2
-            for line in f:
-                if not line.strip():
-                    continue
-                cols = [c.strip() for c in line.strip().split(',')]
-                try:
-                    lk = cols[idx_lock]
-                    t = int(float(cols[idx_threads]))
-                    y = float(cols[idx_ops_s])
-                except Exception:
-                    continue
-                results.setdefault(lk, []).append((t, y))
-        # sort each series by threads
-        for lk in list(results.keys()):
-            results[lk] = sorted(results[lk], key=lambda p: p[0])
-        threads_list = sorted({t for series in results.values() for (t, _) in series})
-    else:
-        # Generate by running binary
-        binary = Path(args.bin)
-        if not binary.exists():
-            print(f"Binary not found: {binary}", file=sys.stderr)
-            return 2
-        # determine threads list
-        if args.threads is not None:
-            threads_list = args.threads
-        elif args.thread_bins is not None:
-            threads_list = parse_thread_bins(args.thread_bins)
-        else:
-            threads_list = pow2_threads_up_to(max(1, args.max_threads))
-        # determine locks
-        locks = [s.strip() for s in args.locks.split(',') if s.strip()]
-        if not locks:
-            print("No locks specified", file=sys.stderr)
-            return 2
-        ratio = args.ratio.replace(',', ':') if args.task == "cpu_burn" else ""
-        print("# Running benchmarks:")
-        print(f"# binary={binary} task={args.task} ratio={ratio or '-'} duration={args.duration}s")
-        print(f"# locks={locks}")
-        print(f"# threads={threads_list}")
-        for lock in locks:
-            series: List[Tuple[int, float]] = []
-            for t in threads_list:
-                avg_ops, ops_s = run_once(binary, args.task, lock, t, args.duration, ratio)
-                print(f"result,lock={lock},threads={t},avg_ops={avg_ops:.2f},ops_s={ops_s:.2f}")
-                series.append((t, ops_s))
-            results[lock] = series
-        if args.no_plot:
-            return 0
-    # If csv_in mode, locks list may not reflect CSV content; derive from results
-    if args.csv_in:
-        locks = list(results.keys())
-        if not locks:
-            print("No series found in CSV", file=sys.stderr)
-            return 2
+                lk = cols[idx_lock]
+                t = int(float(cols[idx_threads]))
+                y = float(cols[idx_ops_s])
+                if idx_task is not None and task_name is None:
+                    task_name = cols[idx_task]
+            except Exception:
+                continue
+            results.setdefault(lk, []).append((t, y))
 
-    if args.no_plot:
-        return 0
+    if not results:
+        print("No data found in CSV", file=sys.stderr)
+        return 2
 
+    # Plot
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        print("matplotlib not installed. Install with 'pip install matplotlib' or run with --no-plot.", file=sys.stderr)
+        print("matplotlib not installed. Install with 'pip install matplotlib'", file=sys.stderr)
         return 3
 
-    plt.figure(figsize=(10, 5))
-    for lock, series in results.items():
-        xs = [t for (t, y) in series]
-        ys = [y for (t, y) in series]
-        plt.plot(xs, ys, marker='o', label=lock)
+    plt.figure(figsize=(8, 5))
+    all_threads = set()
+    for lk, series in results.items():
+        series = sorted(series, key=lambda p: p[0])
+        xs = [t for (t, _) in series]
+        ys = [y for (_, y) in series]
+        all_threads.update(xs)
+        plt.plot(xs, ys, marker='o', label=lk)
     plt.xlabel('Threads')
     plt.ylabel('Ops/s')
-    plt.title("threads vs ops/s")
+    title = f"threads vs ops/s"
+    if task_name:
+        title = f"{task_name} {title}"
+    plt.title(title)
     plt.grid(True, alpha=0.3)
     plt.legend()
-    plt.xticks(threads_list)
+    plt.xticks(sorted(all_threads))
 
     if args.output:
         out_path = Path(args.output)
@@ -214,4 +88,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    sys.exit(main())
     sys.exit(main())

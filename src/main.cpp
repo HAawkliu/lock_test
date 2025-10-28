@@ -18,57 +18,37 @@
 using namespace lt;
 
 struct Args {
-    int threads = 0; // 0 表示未显式指定，触发批量线程数测试
-    std::string runTask = "do_nothing";
-    std::string lockKind = "mutex"; // 若 -L 指定多个锁，则此字段作为默认/回退
-    int repeats = 5; // internal multiple runs for averaging
-    double duration = 2.0; // seconds per test run
-    bool explicitThreads = false; // 是否由 -t 显式指定
-    // cpu_burn 配置（多数并行，少数加锁）
-    int cpuParallelIters = -1; // <0 表示采用默认值
-    int cpuLockedIters = -1;   // <0 表示采用默认值
-    // 线程 sweep 控制
-    std::vector<int> threadsList; // -T 指定
-    std::string threadBins;       // -B 指定，如 "1-64:1,65-128:8"
-    std::vector<std::string> locks; // -L 指定多个锁
-    // 输出控制
-    bool csv = false;           // 是否输出 CSV 到 stdout
-    bool csvOnly = false;       // 仅输出 CSV（不打印表格）
-    std::string csvFile;        // 输出 CSV 文件路径，可与 csvOnly 组合
+    // 任务类型、锁列表、分段线程集、重复次数、时长、cpu_burn 比例、CSV 文件输出、是否仅 CSV
+    std::string runTask = "cpu_burn";   // 支持 cpu_burn | do_nothing（可扩展）
+    std::vector<std::string> locks;     // -L mutex,spin,ticket,mcs
+    std::string threadBins;             // -B 1-64:1,65-128:8
+    int repeats = 5;                    // -n 重复次数
+    double duration = 2.0;              // -d 每组时长（秒）
+    int cpuParallelIters = 2048;        // -R p[:l] 并行迭代
+    int cpuLockedIters = 32;            // -R p[:l] 加锁迭代
+    std::string csvFile;                // --csv-file 输出 CSV 文件
+    bool csvOnly = false;               // --csv-only 仅 CSV
 };
 
 static void print_usage(const char* prog) {
-    std::cout << "Usage: " << prog << " [-t threads] [-T list] [-B bins] [-L locks] [-r task] [-l lock] [-n repeats] [-d seconds] [--csv] [--csv-only] [--csv-file path]" << "\n";
-    std::cout << "  -t threads   number of pthreads (default runs 1,2,4,8,16,32 when omitted)\n";
-    std::cout << "  -T list      explicit thread list, e.g. 1,3,6,9,12 (overrides -t/-B default sweep)\n";
-    std::cout << "  -B bins      piecewise bins like 1-64:1,65-128:8 (inclusive ranges, step default=1)\n";
-    std::cout << "  -L locks     comma-separated locks, e.g. mutex,spin,ticket,mcs (default single -l)\n";
-    std::cout << "  -r task      runtask name: do_nothing (default)\n";
-    std::cout << "  -l lock      lock kind: mutex (default)\n";
-    std::cout << "  -n repeats   repeats per thread setting (default 5)\n";
-    std::cout << "  -d seconds   duration per run in seconds (default 2.0)\n";
-    std::cout << "  -R p[:l]     cpu_burn iters: parallel p, locked l (default p=2048,l=32)\n";
-    std::cout << "  --csv        also print CSV lines to stdout (with header)\n";
-    std::cout << "  --csv-only   print only CSV (suppress formatted table)\n";
-    std::cout << "  --csv-file f write CSV to file path f (will include header; creates/overwrites)\n";
+    std::cout << "Usage:\n"
+              << "  " << prog << " -r <task> -L mutex,spin,ticket,mcs \\\n" 
+              << "    -B 1-64:1,65-128:8 -n 5 -d 1.0 -R 2048:32 \\\n" 
+              << "    --csv-file results.csv [--csv-only]\n";
+    std::cout << "  -r task       task kind: cpu_burn | do_nothing\n";
+    std::cout << "  -L locks      comma-separated locks: mutex,spin,ticket,mcs\n";
+    std::cout << "  -B bins       thread bins: e.g. 1-64:1,65-128:8 (inclusive; step default=1)\n";
+    std::cout << "  -n repeats    repeats per setting (default 5)\n";
+    std::cout << "  -d seconds    duration per run in seconds (default 2.0)\n";
+    std::cout << "  -R p[:l]      cpu_burn iters: parallel p, locked l (default 2048:32)\n";
+    std::cout << "  --csv-file f  write CSV to file path f (with header)\n";
+    std::cout << "  --csv-only    suppress formatted table (CSV only)\n";
 }
 
 static bool parse_args(int argc, char** argv, Args& out) {
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
-        if (a == "-t" && i + 1 < argc) {
-            out.threads = std::atoi(argv[++i]);
-            out.explicitThreads = true;
-        } else if (a == "-T" && i + 1 < argc) {
-            std::string v = argv[++i];
-            std::stringstream ss(v);
-            std::string item;
-            while (std::getline(ss, item, ',')) {
-                if (!item.empty()) out.threadsList.push_back(std::atoi(item.c_str()));
-            }
-            // remove non-positive
-            out.threadsList.erase(std::remove_if(out.threadsList.begin(), out.threadsList.end(), [](int x){return x<=0;}), out.threadsList.end());
-        } else if (a == "-B" && i + 1 < argc) {
+        if (a == "-B" && i + 1 < argc) {
             out.threadBins = argv[++i];
         } else if (a == "-L" && i + 1 < argc) {
             std::string v = argv[++i];
@@ -79,8 +59,6 @@ static bool parse_args(int argc, char** argv, Args& out) {
             }
         } else if (a == "-r" && i + 1 < argc) {
             out.runTask = argv[++i];
-        } else if (a == "-l" && i + 1 < argc) {
-            out.lockKind = argv[++i];
         } else if (a == "-n" && i + 1 < argc) {
             out.repeats = std::atoi(argv[++i]);
         } else if (a == "-d" && i + 1 < argc) {
@@ -104,12 +82,9 @@ static bool parse_args(int argc, char** argv, Args& out) {
             };
             int p = -1, l = -1;
             parse_pair(v, p, l);
-            if (p > 0) out.cpuParallelIters = p;
-            if (l > 0) out.cpuLockedIters = l;
-        } else if (a == "--csv") {
-            out.csv = true;
+            if (p > 0) out.cpuParallelIters = p; else out.cpuParallelIters = 2048;
+            if (l > 0) out.cpuLockedIters = l; else if (l == -1) {/* keep default */}
         } else if (a == "--csv-only") {
-            out.csv = true;
             out.csvOnly = true;
         } else if (a == "--csv-file" && i + 1 < argc) {
             out.csvFile = argv[++i];
@@ -122,9 +97,25 @@ static bool parse_args(int argc, char** argv, Args& out) {
             return false;
         }
     }
-    if (out.explicitThreads && out.threads <= 0) out.threads = 1;
     if (out.duration <= 0.0) out.duration = 1.0;
     if (out.repeats <= 0) out.repeats = 1;
+    // 允许 cpu_burn / do_nothing；其他任务名暂不支持
+    if (!(out.runTask == "cpu_burn" || out.runTask == "do_nothing")) {
+        std::cerr << "Unsupported task: " << out.runTask << ", supported: cpu_burn, do_nothing" << "\n";
+        return false;
+    }
+    if (out.locks.empty()) {
+        std::cerr << "Locks list (-L) is required" << "\n";
+        return false;
+    }
+    if (out.threadBins.empty()) {
+        std::cerr << "Thread bins (-B) is required" << "\n";
+        return false;
+    }
+    if (out.csvFile.empty()) {
+        std::cerr << "--csv-file is required" << "\n";
+        return false;
+    }
     return true;
 }
 
@@ -189,17 +180,16 @@ static std::unique_ptr<iLock> make_lock(const std::string& name) {
     return nullptr;
 }
 
-static std::unique_ptr<iRunTask> make_task(const std::string& name, std::uint64_t /*unused*/, int cpuParallelIters, int cpuLockedIters) {
-    if (name == "do_nothing") {
-        return std::make_unique<DoNothingTask>();
-    }
-    if (name == "cpu_burn" || name == "compute") {
-        // 应用 CLI 覆盖，缺省采用 CpuBurnTask 默认值
+static std::unique_ptr<iRunTask> make_task(const std::string& task, int cpuParallelIters, int cpuLockedIters) {
+    if (task == "cpu_burn") {
         int p = (cpuParallelIters > 0) ? cpuParallelIters : 2048;
         int l = (cpuLockedIters > 0) ? cpuLockedIters : 32;
         return std::make_unique<CpuBurnTask>(p, l);
     }
-    return nullptr;
+    if (task == "do_nothing") {
+        return std::make_unique<DoNothingTask>();
+    }
+    return nullptr; // 如需扩展新任务，在此注册
 }
 
 int main(int argc, char** argv) {
@@ -208,40 +198,24 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // 构造要测试的线程数列表
-    std::vector<int> threadCounts;
-    if (args.explicitThreads) {
-        threadCounts.push_back(args.threads);
-    } else if (!args.threadsList.empty()) {
-        threadCounts = args.threadsList;
-    } else if (!args.threadBins.empty()) {
-        threadCounts = parse_bins(args.threadBins);
-        if (threadCounts.empty()) {
-            std::cerr << "Invalid -B bins spec results in empty thread set" << "\n";
-            return 4;
-        }
-    } else {
-        threadCounts = {1, 2, 4, 8, 16, 32};
+    // 构造线程数列表（仅 -B）
+    std::vector<int> threadCounts = parse_bins(args.threadBins);
+    if (threadCounts.empty()) {
+        std::cerr << "Invalid -B bins spec results in empty thread set" << "\n";
+        return 4;
     }
-    // 锁列表
-    std::vector<std::string> lockKinds = args.locks.empty() ? std::vector<std::string>{args.lockKind} : args.locks;
+    // 锁列表（仅 -L）
+    std::vector<std::string> lockKinds = args.locks;
 
     // CSV 输出准备
-    std::ostream* csvOut = nullptr;
-    std::ofstream csvFileOut;
-    if (args.csv || !args.csvFile.empty()) {
-        if (!args.csvFile.empty()) {
-            csvFileOut.open(args.csvFile, std::ios::out | std::ios::trunc);
-            if (!csvFileOut) {
-                std::cerr << "Failed to open CSV file: " << args.csvFile << "\n";
-                return 5;
-            }
-            csvOut = &csvFileOut;
-        } else {
-            csvOut = &std::cout;
-        }
-        (*csvOut) << "task,lock,threads,duration,repeats,cpu_parallel_iters,cpu_locked_iters,avg_ops,ops_s" << '\n';
+    // 打开 CSV 文件（必需）
+    std::ofstream csvFileOut(args.csvFile, std::ios::out | std::ios::trunc);
+    if (!csvFileOut) {
+        std::cerr << "Failed to open CSV file: " << args.csvFile << "\n";
+        return 5;
     }
+    std::ostream* csvOut = &csvFileOut;
+    (*csvOut) << "task,lock,threads,duration,repeats,cpu_parallel_iters,cpu_locked_iters,avg_ops,ops_s" << '\n';
 
     if (!args.csvOnly) {
         std::cout.setf(std::ios::fixed); std::cout.precision(2);
@@ -269,9 +243,9 @@ int main(int argc, char** argv) {
                 std::cerr << "Unknown lock kind: " << lk << "\n";
                 return 2;
             }
-            auto task = make_task(args.runTask, 0, args.cpuParallelIters, args.cpuLockedIters);
+            auto task = make_task(args.runTask, args.cpuParallelIters, args.cpuLockedIters);
             if (!task) {
-                std::cerr << "Unknown runtask: " << args.runTask << "\n";
+                std::cerr << "Failed to create task: " << args.runTask << "\n";
                 return 3;
             }
 
@@ -292,16 +266,14 @@ int main(int argc, char** argv) {
                           << std::right << std::setw(20) << avg_lock_ops
                           << std::setw(20) << lock_qps << "\n";
             }
-            if (csvOut) {
-                int p = (args.cpuParallelIters > 0) ? args.cpuParallelIters : 2048;
-                int l = (args.cpuLockedIters > 0) ? args.cpuLockedIters : 32;
-                (*csvOut) << args.runTask << ',' << lk << ',' << tc << ','
-                          << args.duration << ',' << args.repeats << ','
-                          << p << ',' << l << ','
-                          << std::fixed << std::setprecision(2) << avg_lock_ops << ','
-                          << std::fixed << std::setprecision(2) << lock_qps
-                          << '\n';
-            }
+            int p = (args.runTask == "cpu_burn") ? ((args.cpuParallelIters > 0) ? args.cpuParallelIters : 2048) : 0;
+            int l = (args.runTask == "cpu_burn") ? ((args.cpuLockedIters > 0) ? args.cpuLockedIters : 32) : 0;
+            (*csvOut) << args.runTask << ',' << lk << ',' << tc << ','
+                      << args.duration << ',' << args.repeats << ','
+                      << p << ',' << l << ','
+                      << std::fixed << std::setprecision(2) << avg_lock_ops << ','
+                      << std::fixed << std::setprecision(2) << lock_qps
+                      << '\n';
         }
     }
     return 0;
