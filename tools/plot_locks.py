@@ -190,14 +190,14 @@ def main() -> int:
         print("matplotlib not installed. Install with 'pip install matplotlib' or run with --no-plot.", file=sys.stderr)
         return 3
 
-    plt.figure(figsize=(8, 5))
+    plt.figure(figsize=(10, 5))
     for lock, series in results.items():
         xs = [t for (t, y) in series]
         ys = [y for (t, y) in series]
         plt.plot(xs, ys, marker='o', label=lock)
     plt.xlabel('Threads')
     plt.ylabel('Ops/s')
-    plt.title(f"{args.task} threads vs ops/s")
+    plt.title("threads vs ops/s")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.xticks(threads_list)
