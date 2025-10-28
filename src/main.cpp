@@ -171,11 +171,20 @@ static std::unique_ptr<iLock> make_lock(const std::string& name) {
     if (name == "tas" || name == "spin" || name == "tas_spin") {
         return std::make_unique<TasSpinlock>();
     }
+    if (name == "tas_preload" || name == "spin_preload") {
+        return std::make_unique<TasSpinlockPreLoad>();
+    }
     if (name == "ticket") {
         return std::make_unique<TicketLock>();
     }
+    if (name == "ticket_preload") {
+        return std::make_unique<TicketLockPreLoad>();
+    }
     if (name == "mcs") {
         return std::make_unique<McsLock>();
+    }
+    if (name == "mcs_preload") {
+        return std::make_unique<McsLockPreLoad>();
     }
     return nullptr;
 }

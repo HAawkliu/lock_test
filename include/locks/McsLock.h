@@ -81,4 +81,59 @@ private:
     std::atomic<Node*> tail_{nullptr};
 };
 
+// 预观测版 MCS：先观察 tail 是否为空，仅在空闲时 CAS 占位；不排队，牺牲公平以避免在拥塞时写入
+class McsLockPreLoad : public iLock {
+public:
+    McsLockPreLoad() = default;
+
+    void lock() override {
+        Node& me = node_for_this_thread();
+        me.next.store(nullptr, std::memory_order_relaxed);
+        me.locked.store(true, std::memory_order_relaxed);
+
+        for (;;) {
+            Node* t = tail_.load(std::memory_order_relaxed);
+            if (t != nullptr) {
+                // 已有持有者/等待者，避免写入，继续观察
+                continue;
+            }
+            Node* expected = nullptr;
+            if (tail_.compare_exchange_weak(expected, &me,
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_relaxed)) {
+                // 直接获得锁（无前驱，无需排队）
+                me.locked.store(false, std::memory_order_relaxed);
+                return;
+            }
+        }
+    }
+
+    void unlock() override {
+        Node& me = node_for_this_thread();
+        // 预期无后继者，直接将 tail 从自己清空
+        Node* expected = &me;
+        (void)tail_.compare_exchange_strong(expected, nullptr,
+                                            std::memory_order_acq_rel,
+                                            std::memory_order_relaxed);
+        me.next.store(nullptr, std::memory_order_relaxed);
+    }
+
+private:
+    struct alignas(kCacheLineSize) Node {
+        std::atomic<Node*> next{nullptr};
+        std::atomic<bool> locked{false};
+        char pad[kCacheLineSize - (sizeof(std::atomic<Node*>) + sizeof(std::atomic<bool>)) > 0
+                 ? kCacheLineSize - (sizeof(std::atomic<Node*>) + sizeof(std::atomic<bool>))
+                 : 1]{};
+    };
+    static_assert(alignof(Node) >= kCacheLineSize, "MCS Node should be 64-byte aligned");
+
+    Node& node_for_this_thread() {
+        static thread_local std::unordered_map<const McsLockPreLoad*, Node> map;
+        return map[this];
+    }
+
+    std::atomic<Node*> tail_{nullptr};
+};
+
 } // namespace lt
