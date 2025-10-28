@@ -50,7 +50,8 @@ python3 tools/plot_locks.py --csv-in results.csv --output results.png
 
 ## 示例结果（仅示意）
 
- ![threads vs ops/s](./docs/image.png)
+![alt text](docs/image.png)
+![alt text](docs/image-1.png)
 
 ## 目录与扩展
 
