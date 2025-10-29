@@ -31,7 +31,8 @@ struct SharedTiming {
     std::atomic<bool> start{false};
     std::atomic<bool> stop{false};
     std::atomic<int> ready{0};
-    double endTime{0.0};
+    double endTime{0.0}; // legacy, not used with per-thread timing
+    double durationSeconds{0.0};
     int total{0};
 };
 
@@ -50,11 +51,13 @@ void* thread_func_lock(void* arg) {
     while (!ctx->timing->start.load(std::memory_order_acquire)) {
         // spin until main thread starts the test window
     }
+    // Per-thread local end time to avoid cross-core TSC skew issues
+    const double localEnd = CycleTimer::currentSeconds() + ctx->timing->durationSeconds;
     const int checkEvery = 64; // amortize time checks, keep overshoot bounded
     for (;;) {
         if ((localCount & (checkEvery - 1)) == 0) {
             if (ctx->timing->stop.load(std::memory_order_acquire) ||
-                CycleTimer::currentSeconds() >= ctx->timing->endTime) {
+                CycleTimer::currentSeconds() >= localEnd) {
                 break;
             }
         }
@@ -91,9 +94,8 @@ std::uint64_t LockTestSys::run_test() {
     while (timing.ready.load(std::memory_order_acquire) < numThreads_) {
         // spin
     }
-    // set the common end time and start flag
-    const double startTime = CycleTimer::currentSeconds();
-    timing.endTime = startTime + durationSeconds_;
+    // broadcast duration and start flag (threads compute local end time)
+    timing.durationSeconds = durationSeconds_;
     timing.start.store(true, std::memory_order_release);
 
     std::uint64_t total = 0;
