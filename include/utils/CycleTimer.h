@@ -124,6 +124,27 @@ namespace lt {
 #else
       FILE *fp = fopen("/proc/cpuinfo","r");
       char input[1024];
+  // Simple manual override: assume CPU runs at max frequency set by user.
+  // On x86_64, you can define LT_TSC_GHZ at compile time (e.g., -DLT_TSC_GHZ=3.2)
+  // or set environment variable LT_TSC_GHZ at runtime to bypass parsing.
+#if defined(__x86_64__)
+#  ifdef LT_TSC_GHZ
+  secondsPerTick_val = 1e-9 / static_cast<double>(LT_TSC_GHZ);
+  initialized = true;
+  return secondsPerTick_val;
+#  else
+  if (const char* ghz_env = getenv("LT_TSC_GHZ")) {
+    char* endp = nullptr;
+    double v = strtod(ghz_env, &endp);
+    if (endp != ghz_env && v > 0.0) {
+      secondsPerTick_val = 1e-9 / v;
+      initialized = true;
+      return secondsPerTick_val;
+    }
+  }
+#  endif
+#endif
+      
       if (!fp) {
          fprintf(stderr, "CycleTimer::resetScale failed: couldn't find /proc/cpuinfo.");
          exit(-1);
