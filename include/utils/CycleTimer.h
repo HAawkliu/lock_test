@@ -122,8 +122,7 @@ namespace lt {
       QueryPerformanceFrequency(&qwTicksPerSec);
       secondsPerTick_val = 1.0/static_cast<double>(qwTicksPerSec.QuadPart);
 #else
-      FILE *fp = fopen("/proc/cpuinfo","r");
-      char input[1024];
+  // Manual-only mode on Linux: do not parse /proc/cpuinfo anymore.
   // Simple manual override: assume CPU runs at max frequency set by user.
   // On x86_64, you can define LT_TSC_GHZ at compile time (e.g., -DLT_TSC_GHZ=3.2)
   // or set environment variable LT_TSC_GHZ at runtime to bypass parsing.
@@ -144,46 +143,14 @@ namespace lt {
   }
 #  endif
 #endif
-      
-      if (!fp) {
-         fprintf(stderr, "CycleTimer::resetScale failed: couldn't find /proc/cpuinfo.");
-         exit(-1);
-      }
-      // In case we don't find it, e.g. on the N900
+      // If we reach here on x86_64, user did not provide LT_TSC_GHZ; abort with guidance.
+#if defined(__x86_64__)
+      fprintf(stderr, "CycleTimer error: LT_TSC_GHZ not set. Define -DLT_TSC_GHZ=<GHz> at build time or set env LT_TSC_GHZ at runtime.\n");
+      exit(-1);
+#else
+      // Non-x86 fallback: treat ticks as nanoseconds (currentTicks uses clock_gettime path)
       secondsPerTick_val = 1e-9;
-      while (!feof(fp) && fgets(input, 1024, fp)) {
-        // NOTE(boulos): Because reading cpuinfo depends on dynamic
-        // frequency scaling it's better to read the @ sign first
-        float GHz, MHz;
-        if (strstr(input, "model name")) {
-          char* at_sign = strstr(input, "@");
-          if (at_sign) {
-            char* after_at = at_sign + 1;
-            char* GHz_str = strstr(after_at, "GHz");
-            char* MHz_str = strstr(after_at, "MHz");
-            if (GHz_str) {
-              *GHz_str = '\0';
-              if (1 == sscanf(after_at, "%f", &GHz)) {
-                //printf("GHz = %f\n", GHz);
-                secondsPerTick_val = 1e-9f / GHz;
-                break;
-              }
-            } else if (MHz_str) {
-              *MHz_str = '\0';
-              if (1 == sscanf(after_at, "%f", &MHz)) {
-                //printf("MHz = %f\n", MHz);
-                secondsPerTick_val = 1e-6f / MHz;
-                break;
-              }
-            }
-          }
-        } else if (1 == sscanf(input, "cpu MHz : %f", &MHz)) {
-          //printf("MHz = %f\n", MHz);
-          secondsPerTick_val = 1e-6f / MHz;
-          break;
-        }
-      }
-      fclose(fp);
+#endif
 #endif
 
       initialized = true;
