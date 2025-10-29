@@ -183,12 +183,6 @@ static std::unique_ptr<iLock> make_lock(const std::string& name) {
     if (name == "ticket_bopf" || name == "ticket_backoff_prefetch") {
         return std::make_unique<TicketBackOffAndPreFetch>();
     }
-    if (name == "ticket_preload") {
-        return std::make_unique<TicketLockPreLoad>();
-    }
-    if(name == "ticket_adaptive") {
-        return std::make_unique<TicketAdaptive>();
-    }
     if (name == "mcs") {
         return std::make_unique<McsLock>();
     }
