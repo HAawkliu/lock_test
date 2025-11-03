@@ -19,6 +19,7 @@ cmake --build build -j
 
 可执行文件：`build/lock_test`
 
+
 ## 最快上手
 
 - 自定义线程粒度（分段区间）+ 一次对比多锁 + 输出 CSV（推荐工作流）
@@ -83,6 +84,12 @@ python3 tools/plot_locks.py --csv-in results.csv --output results.png
 ## 小贴士
 
 - 使用 Release 构建，尽量在低干扰环境下测试；短时不稳定可加大 `-d`；需要更平滑可提高 `-n` 取平均。
+
+## 线程绑核（CPU 亲和性）
+
+- 在 Linux 下，程序会将每个工作线程以“轮转（round-robin）”方式绑定到在线 CPU 上（`pthread_setaffinity_np`）。
+- 目的：避免线程在核心之间迁移导致的 TSC/缓存抖动，提升计时稳定性与可重复性。
+- 非 Linux 平台不会绑核，按系统调度运行。
 
 ## CSV 字段说明
 

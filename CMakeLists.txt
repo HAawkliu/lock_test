@@ -25,12 +25,5 @@ find_package(Threads REQUIRED)
 
 target_link_libraries(lock_test PRIVATE Threads::Threads)
 
-# Optional: manual override of TSC frequency (in GHz) for CycleTimer
-# Usage:
-#   cmake -S . -B build -DCYCLE_TIMER_TSC_GHZ=3.2
-#   cmake --build build
-set(CYCLE_TIMER_TSC_GHZ "" CACHE STRING "Override TSC base frequency in GHz for CycleTimer (defines LT_TSC_GHZ)")
-if(CYCLE_TIMER_TSC_GHZ)
-  target_compile_definitions(lock_test PRIVATE LT_TSC_GHZ=${CYCLE_TIMER_TSC_GHZ})
-  message(STATUS "CycleTimer: using manual TSC GHz override: ${CYCLE_TIMER_TSC_GHZ}")
-endif()
+# Note: CycleTimer and LT_TSC_GHZ overrides were removed.
+# Timing is controlled by main thread using nanosleep + a global stop flag (libslock style).

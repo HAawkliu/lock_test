@@ -85,16 +85,21 @@ private:
 // Back-off ticket lock: spin delay proportional to distance (my - serving)
 class TicketBackOff : public iLock {
 public:
-    TicketBackOff() = default;
+    TicketBackOff() {
+        // Match libslock init: head=1, tail=0
+        next_.v.store(0, std::memory_order_relaxed);
+        serving_.v.store(1, std::memory_order_relaxed);
+    }
 
     void lock() override {
-        const std::uint32_t my = next_.v.fetch_add(1, std::memory_order_relaxed);
-        unsigned wait = TICKET_BASE_WAIT;
-        std::uint32_t distance_prev = 1;
+        // libslock uses IAF_U32 (increment-and-fetch). Emulate with fetch_add + 1
+        const std::uint32_t my = next_.v.fetch_add(1, std::memory_order_relaxed) + 1;
+        unsigned wait = TICKET_BASE_WAIT;           // libslock: TICKET_BASE_WAIT
+        std::uint32_t distance_prev = 1;            // reset wait if queue length changes
         for (;;) {
             const std::uint32_t s = serving_.v.load(std::memory_order_acquire);
             if (s == my) break;
-            const std::uint32_t distance = my - s; // unsigned wrap-around ok for queue distance
+            const std::uint32_t distance = (my >= s) ? (my - s) : (s - my); // match libslock sub_abs
 
             if (distance > 1) {
                 if (distance != distance_prev) {
@@ -132,17 +137,22 @@ private:
 // Back-off + write-prefetch: prefetch next_ for write before fetch_add, and back-off while waiting
 class TicketBackOffAndPreFetch : public iLock {
 public:
-    TicketBackOffAndPreFetch() = default;
+    TicketBackOffAndPreFetch() {
+        // Match libslock init: head=1, tail=0
+        next_.v.store(0, std::memory_order_relaxed);
+        serving_.v.store(1, std::memory_order_relaxed);
+    }
 
     void lock() override {
+        // Prefetch disabled for portability; write-prefetch may cause stalls on some CPUs.
         prefetchw(&next_.v);
-        const std::uint32_t my = next_.v.fetch_add(1, std::memory_order_relaxed);
+        const std::uint32_t my = next_.v.fetch_add(1, std::memory_order_relaxed) + 1;
         unsigned wait = TICKET_BASE_WAIT;
         std::uint32_t distance_prev = 1;
         for (;;) {
             const std::uint32_t s = serving_.v.load(std::memory_order_acquire);
             if (s == my) break;
-            const std::uint32_t distance = my - s;
+            const std::uint32_t distance = (my >= s) ? (my - s) : (s - my);
 
             if (distance > 1) {
                 if (distance != distance_prev) {
@@ -169,6 +179,7 @@ public:
     }
 
     void unlock() override {
+    // Prefetch disabled for portability.
         prefetchw(&serving_.v);
         serving_.v.fetch_add(1, std::memory_order_release);
     }
