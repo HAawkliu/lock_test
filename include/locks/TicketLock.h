@@ -45,9 +45,9 @@ static inline void cpu_relax_n(unsigned n) {
 }
 
 // Tuning constants inspired by reference implementation
-constexpr unsigned TICKET_BASE_WAIT = 512u;
-constexpr unsigned TICKET_MAX_WAIT  = 4095u; // reserved for potential ramping
-constexpr unsigned TICKET_WAIT_NEXT = 128u;
+constexpr unsigned TICKET_BASE_WAIT = 4u;
+constexpr unsigned TICKET_MAX_WAIT  = 32u; // reserved for potential ramping
+constexpr unsigned TICKET_WAIT_NEXT = 1u;
 
 // An aligned atomic wrapper to avoid false sharing by occupying its own cache line
 template <typename T>
